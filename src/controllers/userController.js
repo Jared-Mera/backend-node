@@ -106,3 +106,22 @@ export const deleteUser = async (req, res) => {
     res.status(500).json({ error: 'Error eliminando usuario' });
   }
 };
+
+// Buscar usuarios por nombre o email
+export const searchUsers = async (req, res) => {
+  const { query } = req.query;
+
+  try {
+    const users = await User.find({
+      $or: [
+        { name: { $regex: query, $options: 'i' } },
+        { email: { $regex: query, $options: 'i' } }
+      ]
+    }).select('-password').populate('role', 'name');
+
+    res.json(users);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error buscando usuarios' });
+  }
+};

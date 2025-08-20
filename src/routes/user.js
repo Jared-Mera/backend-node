@@ -3,7 +3,8 @@ import {
   createUser, 
   getUsers, 
   updateUser, 
-  deleteUser 
+  deleteUser,
+  searchUsers  // Agregar esta importación
 } from '../controllers/userController.js';
 import { authenticate, isAdmin } from '../middlewares/auth.js';
 
@@ -23,5 +24,7 @@ router.put('/:id', updateUser);
 
 // DELETE /api/users/:id - Eliminar usuario
 router.delete('/:id', deleteUser);
+
+router.get('/search', searchUsers);
 
 export default router;
