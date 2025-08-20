@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sistema de Ventas</title>
+</head>
+<body>
+    <h1>🛒 Lista de productos</h1>
+    <ul>
+        {% for p in productos %}
+            <li>
+                {{ p.nombre }} - ${{ p.precio }}
+                <a href="/agregar/{{ p.id }}">Agregar</a>
+            </li>
+        {% endfor %}
+    </ul>
+    <a href="/carrito">Ver carrito</a>
+</body>
+</html>
