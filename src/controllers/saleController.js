@@ -5,7 +5,7 @@ import User from '../models/User.js';
 // Crear nueva venta
 export const createSale = async (req, res) => {
   const { productos } = req.body;
-  const vendedor_id = req.user.id; // Obtenido del token
+  const vendedor_id = req.user.id; // Obtenido del token 
 
   try {
     // Verificar que el vendedor exista
