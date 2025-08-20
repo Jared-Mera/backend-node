@@ -9,7 +9,7 @@ const saleSchema = new mongoose.Schema({
   },
   productos: [{
     producto_id: {
-      type: String, // Referencia al ID del producto en PostgreSQL
+      type: String, //Referencia al ID del producto en PostgreSQL
       required: true
     },
     cantidad: {
@@ -36,7 +36,7 @@ const saleSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Middleware para calcular el total antes de guardar
+//Middleware para calcular el total antes de guardar
 saleSchema.pre('validate', function(next) {
   if (Array.isArray(this.productos) && this.productos.length > 0) {
     this.total = this.productos.reduce((sum, item) => {
