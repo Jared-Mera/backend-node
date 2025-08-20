@@ -47,21 +47,38 @@ export const login = async (req, res) => {
 // Crear usuario inicial (solo para administradores)
 export const createInitialAdmin = async () => {
   try {
+    // 1. Buscar en la base de datos el rol "Administrador"
+    //    (Se asume que ya está creado en la colección de roles)
     const adminRole = await Role.findOne({ name: 'Administrador' });
 
+    // 2. Verificar si ya existe un usuario con el correo "admin@empresa.com"
+    //    Esto previene que se creen múltiples administradores por error.
     const existingAdmin = await User.findOne({ email: 'admin@empresa.com' });
+
+    // 3. Si NO existe ese administrador, entonces se crea.
     if (!existingAdmin) {
+      // Se encripta la contraseña "admin123" con bcrypt
+      // 12 -> número de rondas de encriptación (más rondas = más seguro, pero más lento)
       const hashedPassword = await bcrypt.hash('admin123', 12);
 
+      // 4. Crear el nuevo usuario administrador con:
+      // - Nombre: "Admin Principal"
+      // - Email: "admin@empresa.com"
+      // - Contraseña encriptada
+      // - Rol: el rol de administrador (referencia a Role._id)
       await User.create({
         name: 'Admin Principal',
         email: 'admin@empresa.com',
         password: hashedPassword,
         role: adminRole._id
       });
+
+      // 5. Mensaje de éxito en consola
       console.log('Usuario administrador inicial creado');
     }
   } catch (error) {
+    // Si ocurre cualquier error (problema de conexión, creación, etc.), se muestra en consola
     console.error('Error creando admin inicial:', error);
   }
 };
+
