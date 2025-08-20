@@ -25,10 +25,10 @@ router.get('/report', getSalesReport);
 // GET /api/sales/report - Obtener reporte de ventas por fechas
 router.get('/:id', getSaleById);
 
-// PUT /api/sales/:id - Actualizar venta
-router.put('/:id', updateSale);
+// // PUT /api/sales/:id - Actualizar venta
+// router.put('/:id', updateSale);
 
-// DELETE /api/sales/:id - Eliminar venta
-router.delete('/:id', deleteSale);
+// // DELETE /api/sales/:id - Eliminar venta
+// router.delete('/:id', deleteSale);
 
 export default router;
