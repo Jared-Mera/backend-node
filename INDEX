@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reporte de Ventas</title>
+</head>
+<body>
+    <h1>📊 Reporte de Ventas</h1>
+    <ul>
+        {% for v in ventas %}
+            <li>{{ v.fecha }} - {{ v.producto }} - ${{ v.precio }}</li>
+        {% endfor %}
+    </ul>
+    <h2>Total generado: ${{ total }}</h2>
+    <a href="/">Volver a productos</a>
+</body>
+</html>
