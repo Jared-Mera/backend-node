@@ -1,0 +1,56 @@
+from flask import Flask, render_template, request, redirect, url_for, session
+from datetime import datetime
+
+app = Flask(__name__)
+app.secret_key = "clave_secreta"
+
+# Productos disponibles
+productos = [
+    {"id": 1, "nombre": "Laptop", "precio": 12000},
+    {"id": 2, "nombre": "Celular", "precio": 8000},
+    {"id": 3, "nombre": "Audífonos", "precio": 500},
+    {"id": 4, "nombre": "Mouse", "precio": 300}
+]
+
+ventas = []  # Simulación de BD
+
+@app.route("/")
+def index():
+    return render_template("index.html", productos=productos)
+
+@app.route("/agregar/<int:id>")
+def agregar(id):
+    if "carrito" not in session:
+        session["carrito"] = []
+    for p in productos:
+        if p["id"] == id:
+            session["carrito"].append(p)
+            session.modified = True
+            break
+    return redirect(url_for("index"))
+
+@app.route("/carrito")
+def carrito():
+    carrito = session.get("carrito", [])
+    total = sum([p["precio"] for p in carrito])
+    return render_template("carrito.html", carrito=carrito, total=total)
+
+@app.route("/comprar")
+def comprar():
+    carrito = session.get("carrito", [])
+    for p in carrito:
+        ventas.append({
+            "producto": p["nombre"],
+            "precio": p["precio"],
+            "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    session["carrito"] = []
+    return redirect(url_for("reporte"))
+
+@app.route("/reporte")
+def reporte():
+    total = sum([v["precio"] for v in ventas])
+    return render_template("reporte.html", ventas=ventas, total=total)
+
+if __name__ == "__main__":
+    app.run(debug=True)
