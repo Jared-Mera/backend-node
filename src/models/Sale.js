@@ -1,4 +1,4 @@
-
+//es la forma en la que el backend guarda y organiza la información de cada venta que se realiza en el sistema.
 import mongoose from 'mongoose';
 
 const saleSchema = new mongoose.Schema({

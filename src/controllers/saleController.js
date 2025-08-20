@@ -14,7 +14,7 @@ export const createSale = async (req, res) => {
       return res.status(404).json({ error: 'Vendedor no encontrado' });
     }
 
-    // Creamos la venta
+    // Crear la venta
     const nuevaVenta = new Sale({
       vendedor_id,
       productos
@@ -106,7 +106,7 @@ export const getSalesReport = async (req, res) => {
 };
 
 
-// Agregar estas funciones al final del archivo saleController.js
+// // Agregar estas funciones al final del archivo saleController.js
 
 // // Actualizar una venta existente
 // export const updateSale = async (req, res) => {
