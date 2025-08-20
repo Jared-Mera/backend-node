@@ -1,4 +1,4 @@
-// backend-node/src/models/Sale.js
+
 import mongoose from 'mongoose';
 
 const saleSchema = new mongoose.Schema({
