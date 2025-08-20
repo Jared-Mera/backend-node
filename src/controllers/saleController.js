@@ -105,55 +105,54 @@ export const getSalesReport = async (req, res) => {
   }
 };
 
+// Agregar estas funciones al final del archivo saleController.js
 
-// // Agregar estas funciones al final del archivo saleController.js
+// Actualizar una venta existente
+export const updateSale = async (req, res) => {
+  const { id } = req.params;
+  const { productos } = req.body;
 
-// // Actualizar una venta existente
-// export const updateSale = async (req, res) => {
-//   const { id } = req.params;
-//   const { productos } = req.body;
+  try {
+    const venta = await Sale.findById(id);
+    if (!venta) {
+      return res.status(404).json({ error: 'Venta no encontrada' });
+    }
 
-//   try {
-//     const venta = await Sale.findById(id);
-//     if (!venta) {
-//       return res.status(404).json({ error: 'Venta no encontrada' });
-//     }
+    // Verificar permisos: solo administrador o el vendedor que creó la venta
+    if (req.user.role !== 'Administrador' && venta.vendedor_id.toString() !== req.user.id) {
+      return res.status(403).json({ error: 'No autorizado para modificar esta venta' });
+    }
 
-//     // Verificar permisos: solo administrador o el vendedor que creó la venta
-//     if (req.user.role !== 'Administrador' && venta.vendedor_id.toString() !== req.user.id) {
-//       return res.status(403).json({ error: 'No autorizado para modificar esta venta' });
-//     }
+    // Actualizar productos
+    venta.productos = productos;
+    await venta.save();
 
-//     // Actualizar productos
-//     venta.productos = productos;
-//     await venta.save();
+    res.json(venta);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error actualizando venta' });
+  }
+};
 
-//     res.json(venta);
-//   } catch (error) {
-//     console.error(error);
-//     res.status(500).json({ error: 'Error actualizando venta' });
-//   }
-// };
+// Eliminar una venta
+export const deleteSale = async (req, res) => {
+  const { id } = req.params;
 
-// // Eliminar una venta
-// export const deleteSale = async (req, res) => {
-//   const { id } = req.params;
+  try {
+    const venta = await Sale.findById(id);
+    if (!venta) {
+      return res.status(404).json({ error: 'Venta no encontrada' });
+    }
 
-//   try {
-//     const venta = await Sale.findById(id);
-//     if (!venta) {
-//       return res.status(404).json({ error: 'Venta no encontrada' });
-//     }
+    // Verificar permisos: solo administrador o el vendedor que creó la venta
+    if (req.user.role !== 'Administrador' && venta.vendedor_id.toString() !== req.user.id) {
+      return res.status(403).json({ error: 'No autorizado para eliminar esta venta' });
+    }
 
-//     // Verificar permisos: solo administrador o el vendedor que creó la venta
-//     if (req.user.role !== 'Administrador' && venta.vendedor_id.toString() !== req.user.id) {
-//       return res.status(403).json({ error: 'No autorizado para eliminar esta venta' });
-//     }
-
-//     await venta.deleteOne();
-//     res.json({ message: 'Venta eliminada correctamente' });
-//   } catch (error) {
-//     console.error(error);
-//     res.status(500).json({ error: 'Error eliminando venta' });
-//   }
-// };
+    await venta.deleteOne();
+    res.json({ message: 'Venta eliminada correctamente' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error eliminando venta' });
+  }
+};

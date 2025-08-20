@@ -5,7 +5,9 @@ import {
   createSale, 
   getSales, 
   getSaleById,
-  getSalesReport
+  getSalesReport,
+  updateSale,
+  deleteSale
 } from '../controllers/saleController.js';
 
 const router = express.Router();
@@ -25,10 +27,12 @@ router.get('/report', getSalesReport);
 // GET /api/sales/report - Obtener reporte de ventas por fechas
 router.get('/:id', getSaleById);
 
-// // PUT /api/sales/:id - Actualizar venta
-// router.put('/:id', updateSale);
+// Agregar estas rutas al final del archivo sale.js
 
-// // DELETE /api/sales/:id - Eliminar venta
-// router.delete('/:id', deleteSale);
+// PUT /api/sales/:id - Actualizar venta
+router.put('/:id', updateSale);
+
+// DELETE /api/sales/:id - Eliminar venta
+router.delete('/:id', deleteSale);
 
 export default router;
