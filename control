@@ -1,0 +1,42 @@
+<?php
+namespace App\Http\Controllers;
+use App\Models\Product; use Illuminate\Http\Request;
+
+
+class CartController extends Controller {
+public function index(){
+$cart = session('cart', []); // [ product_id => qty ]
+$productIds = array_keys($cart);
+$products = Product::whereIn('id', $productIds)->get();
+$items = [];$total=0;
+foreach($products as $p){
+$qty = $cart[$p->id];
+$subtotal = $qty * $p->price;
+$total += $subtotal;
+$items[] = compact('p','qty','subtotal');
+}
+return view('shop.cart', compact('items','total'));
+}
+
+
+public function add(Request $request, Product $product){
+$qty = max(1, (int)$request->input('qty', 1));
+$cart = session('cart', []);
+$cart[$product->id] = ($cart[$product->id] ?? 0) + $qty;
+session(['cart'=>$cart]);
+return back()->with('success','Producto agregado');
+}
+
+
+public function update(Request $request, Product $product){
+$qty = max(0, (int)$request->input('qty', 1));
+$cart = session('cart', []);
+if($qty===0){ unset($cart[$product->id]); }
+else { $cart[$product->id] = $qty; }
+session(['cart'=>$cart]);
+return back()->with('info','Carrito actualizado');
+}
+
+
+public function clear(){ session()->forget('cart'); return back()->with('info','Carrito vacío'); }
+}
