@@ -39,6 +39,7 @@ router.post('/', createSale);
 // - Si es vendedor: solo puede ver las que él mismo registró
 router.get('/', getSales);
 
+// Alma Reportes
 // GET /api/sales/report
 // Obtener reporte de ventas (generalmente filtrado por fechas, totales, etc.)
 router.get('/report', getSalesReport);
