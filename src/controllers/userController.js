@@ -124,4 +124,70 @@ export const searchUsers = async (req, res) => {
     console.error(error);
     res.status(500).json({ error: 'Error buscando usuarios' });
   }
+  // FUNCIÓN NUEVA: Para que un usuario cambie su propia contraseña
+export const updateOwnPassword = async (req, res) => {
+  // El ID del usuario se obtiene del token de autenticación
+  const { id } = req.user;
+  const { currentPassword, newPassword } = req.body;
+
+  // Validaciones básicas
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Debes proporcionar la contraseña actual y la nueva.' });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres.' });
+  }
+
+  try {
+    // Buscamos al usuario y pedimos que incluya la contraseña en el resultado
+    const user = await User.findById(id).select('+password');
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    // Comparamos la contraseña actual proporcionada con la de la BD
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'La contraseña actual es incorrecta.' });
+    }
+
+    // Si todo es correcto, hasheamos la nueva contraseña y la guardamos
+    user.password = await bcrypt.hash(newPassword, 12);
+    await user.save();
+
+    res.json({ message: 'Contraseña actualizada correctamente.' });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error actualizando la contraseña.' });
+  }
+};
+
+// FUNCIÓN NUEVA: Para que el Admin cambie la contraseña de cualquier usuario
+export const updateUserPasswordByAdmin = async (req, res) => {
+  // El ID del usuario a modificar viene de los parámetros de la URL
+  const { id } = req.params;
+  const { newPassword } = req.body;
+
+  if (!newPassword || newPassword.length < 6) {
+    return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres.' });
+  }
+
+  try {
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado.' });
+    }
+
+    // El admin no necesita la contraseña vieja, la cambia directamente
+    user.password = await bcrypt.hash(newPassword, 12);
+    await user.save();
+
+    res.json({ message: `Contraseña del usuario ${user.name} actualizada correctamente.` });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error actualizando la contraseña del usuario.' });
+  }
 };
