@@ -1,6 +1,8 @@
 // backend-node/src/controllers/saleController.js
 import Sale from '../models/Sale.js';
 import User from '../models/User.js';
+import { updateProductStock } from '../services/product_service.js'; // Asegúrate de importar la función
+
 
 // Crear nueva venta
 export const createSale = async (req, res) => {
