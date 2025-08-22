@@ -1,8 +1,6 @@
-// backend-node/src/controllers/saleController.js
 import Sale from '../models/Sale.js';
 import User from '../models/User.js';
-import { updateProductStock } from '../services/product_service.js'; // Asegúrate de importar la función
-
+import Product from '../models/Product.js'; // Asegúrate de importar el modelo de Producto
 
 // Crear nueva venta
 export const createSale = async (req, res) => {
@@ -24,6 +22,24 @@ export const createSale = async (req, res) => {
 
     // El total se calcula automáticamente en el pre-save
     await nuevaVenta.save();
+
+    // Actualizar el stock de los productos
+    for (const item of productos) {
+      // Verificar si el producto existe
+      const producto = await Product.findById(item.producto_id);
+      if (!producto) {
+        return res.status(404).json({ error: `Producto con ID ${item.producto_id} no encontrado` });
+      }
+
+      // Verificar si hay suficiente stock
+      if (producto.stock < item.cantidad) {
+        return res.status(400).json({ error: `No hay suficiente stock del producto ${producto.nombre}` });
+      }
+
+      // Reducir el stock
+      producto.stock -= item.cantidad;
+      await producto.save();
+    }
 
     res.status(201).json(nuevaVenta);
   } catch (error) {
@@ -106,8 +122,6 @@ export const getSalesReport = async (req, res) => {
     res.status(500).json({ error: 'Error generando reporte' });
   }
 };
-
-// Agregar estas funciones al final del archivo saleController.js
 
 // Actualizar una venta existente
 export const updateSale = async (req, res) => {
