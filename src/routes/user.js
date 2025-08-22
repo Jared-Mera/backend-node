@@ -1,30 +1,41 @@
+// backend-node/src/routes/userRoutes.js
 import express from 'express';
-import { 
-  createUser, 
-  getUsers, 
-  updateUser, 
+import {
+  createUser,
+  getUsers,
+  updateUser,
   deleteUser,
-  searchUsers  // Agregar esta importación
+  searchUsers,
+  updateOwnPassword,
+  updateUserPasswordByAdmin
 } from '../controllers/userController.js';
 import { authenticate, isAdmin } from '../middlewares/auth.js';
 
 const router = express.Router();
 
-// Todas las rutas requieren autenticación y rol de administrador
-router.use(authenticate, isAdmin);
+// --- Ruta para que un usuario cambie su propia contraseña ---
+// Solo requiere estar autenticado.
+router.put('/profile/change-password', authenticate, updateOwnPassword);
 
-// GET /api/users - Obtener todos los usuarios
-router.get('/', getUsers);
 
-// POST /api/users - Crear nuevo usuario
-router.post('/', createUser);
+// --- Rutas que requieren ser Administrador ---
 
-// PUT /api/users/:id - Actualizar usuario
-router.put('/:id', updateUser);
+// Obtener todos los usuarios
+router.get('/', [authenticate, isAdmin], getUsers);
 
-// DELETE /api/users/:id - Eliminar usuario
-router.delete('/:id', deleteUser);
+// Crear un nuevo usuario
+router.post('/', [authenticate, isAdmin], createUser);
 
-router.get('/search', searchUsers);
+// Buscar usuarios (importante: debe ir antes de las rutas con /:id)
+router.get('/search', [authenticate, isAdmin], searchUsers);
+
+// Actualizar datos de un usuario (nombre, rol) por su ID
+router.put('/:id', [authenticate, isAdmin], updateUser);
+
+// Eliminar un usuario por su ID
+router.delete('/:id', [authenticate, isAdmin], deleteUser);
+
+// Cambiar la contraseña de cualquier usuario por su ID
+router.put('/:id/change-password', [authenticate, isAdmin], updateUserPasswordByAdmin);
 
 export default router;
