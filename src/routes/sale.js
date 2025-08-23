@@ -7,7 +7,8 @@ import {
   getSaleById,
   getSalesReport,
   updateSale,
-  deleteSale
+  deleteSale,
+  getSalesReportPDF
 } from '../controllers/saleController.js';
 
 const router = express.Router();
