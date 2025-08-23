@@ -35,4 +35,7 @@ router.put('/:id', updateSale);
 // DELETE /api/sales/:id - Eliminar venta
 router.delete('/:id', deleteSale);
 
+//Generación de reportes PDF
+router.get('/report/pdf', getSalesReportPDF);
+
 export default router;

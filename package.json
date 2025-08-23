@@ -12,12 +12,13 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@faker-js/faker": "^8.0.2",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.17.1",
-    "@faker-js/faker": "^8.0.2"
+    "puppeteer": "^24.17.0"
   }
 }
