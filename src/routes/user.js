@@ -13,9 +13,7 @@ import { authenticate, isAdmin } from '../middlewares/auth.js';
 
 const router = express.Router();
 
-// --- Ruta para que un usuario cambie su propia contraseña ---
-// Solo requiere estar autenticado.
-router.put('/profile/change-password', authenticate, updateOwnPassword);
+
 
 
 // --- Rutas que requieren ser Administrador ---
@@ -37,5 +35,9 @@ router.delete('/:id', [authenticate, isAdmin], deleteUser);
 
 // Cambiar la contraseña de cualquier usuario por su ID
 router.put('/:id/change-password', [authenticate, isAdmin], updateUserPasswordByAdmin);
+
+// --- Ruta para que un usuario cambie su propia contraseña ---
+// Solo requiere estar autenticado.
+router.put('/profile/change-password', authenticate, updateOwnPassword);
 
 export default router;
