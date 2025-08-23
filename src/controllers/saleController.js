@@ -158,35 +158,69 @@ export const deleteSale = async (req, res) => {
   }
 };
 
-// Nuevo endpoint: genera PDF del reporte de ventas
+/**
+ * getSalesReportPDF mejorado: validación, logs detallados y opciones de debug.
+ * Para activar stack trace en la respuesta añade ?debug=true (útil en desarrollo).
+ */
 export const getSalesReportPDF = async (req, res) => {
   const { startDate, endDate } = req.query;
+  const includeStack = req.query.debug === 'true' || process.env.NODE_ENV !== 'production';
+
+  console.log('[PDF] Inicio de getSalesReportPDF', { startDate, endDate, user: req.user?.id, role: req.user?.role });
+
+  // Validación básica de fechas
+  if (!startDate || !endDate) {
+    console.error('[PDF] Falta startDate o endDate en query.');
+    return res.status(400).json({ error: 'startDate y endDate son requeridos. Formato ISO: YYYY-MM-DD', hint: 'Ejemplo: ?startDate=2025-01-01&endDate=2025-08-22' });
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    console.error('[PDF] startDate o endDate no son fechas válidas.', { startDate, endDate });
+    return res.status(400).json({ error: 'startDate o endDate no son fechas válidas (ISO).', startDate, endDate });
+  }
 
   try {
+    // Construir query (igual que en getSalesReport)
     const query = {
-      fecha: {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      }
+      fecha: { $gte: start, $lte: end }
     };
-
-    if (req.user.role !== 'Administrador' || 'Consultor') {
+    if (req.user.role !== 'Administrador') {
       query.vendedor_id = req.user.id;
     }
 
-    const ventas = await Sale.find(query)
-      .populate('vendedor_id', 'name email')
-      .sort({ fecha: -1 });
+    console.log('[PDF] Query construida', query);
 
-    // Calcular totales
-    const totalVentas = ventas.reduce((sum, venta) => sum + (venta.total || 0), 0);
-    const cantidadVentas = ventas.length;
+    // Obtener ventas
+    let ventas;
+    try {
+      ventas = await Sale.find(query).populate('vendedor_id', 'name email').sort({ fecha: -1 });
+      console.log(`[PDF] Ventas recuperadas: ${ventas.length}`);
+      if (ventas.length > 0) {
+        // loguear muestra del primer elemento (para depuración)
+        const sample = ventas[0].toObject ? ventas[0].toObject() : ventas[0];
+        const sampleCompact = {
+          id: sample._id,
+          fecha: sample.fecha,
+          total: sample.total,
+          vendedor: sample.vendedor_id,
+          productos_sample: Array.isArray(sample.productos) ? sample.productos.slice(0,2) : sample.productos
+        };
+        console.log('[PDF] Ejemplo de venta:', sampleCompact);
+      }
+    } catch (dbErr) {
+      console.error('[PDF] Error consultando la base de datos:', dbErr);
+      if (includeStack) {
+        return res.status(500).json({ error: 'Error consultando ventas', message: dbErr.message, stack: dbErr.stack });
+      }
+      return res.status(500).json({ error: 'Error consultando ventas (revisar logs del servidor)' });
+    }
 
-    // Construir HTML del reporte
+    // Construir HTML (puedes personalizarlo)
     const rowsHtml = ventas.map((v, idx) => {
       const fecha = new Date(v.fecha).toLocaleString();
       const vendedor = v.vendedor_id ? (v.vendedor_id.name || v.vendedor_id.email) : '—';
-      // productos -> lista de nombre x cantidad (si existe)
       const productosStr = Array.isArray(v.productos)
         ? v.productos.map(p => `${p.nombre || p.name || 'item'} (x${p.cantidad ?? p.qty ?? 1})`).join(', ')
         : JSON.stringify(v.productos);
@@ -201,71 +235,95 @@ export const getSalesReportPDF = async (req, res) => {
       `;
     }).join('');
 
+    const totalVentas = ventas.reduce((sum, venta) => sum + (venta.total ?? 0), 0);
+    const cantidadVentas = ventas.length;
+
     const html = `
-      <!doctype html>
-      <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>Reporte de Ventas</title>
-        <style>
-          body { font-family: Arial, Helvetica, sans-serif; font-size:12px; color:#222; margin:20px; }
-          h1 { text-align:center; margin-bottom:6px; }
-          .meta { margin-bottom:18px; }
-          table { width:100%; border-collapse:collapse; margin-top:8px; }
-          th { background:#f2f2f2; padding:8px; border:1px solid #ddd; }
-          td { vertical-align:top; }
-          .totals { margin-top:12px; float:right; border:1px solid #ddd; padding:8px; }
-        </style>
+      <!doctype html><html><head><meta charset="utf-8" />
+      <title>Reporte de Ventas</title>
+      <style>
+        body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#222;margin:20px}
+        h1{text-align:center;margin-bottom:6px}
+        table{width:100%;border-collapse:collapse;margin-top:8px}
+        th{background:#f2f2f2;padding:8px;border:1px solid #ddd}
+        td{vertical-align:top}
+      </style>
       </head>
       <body>
         <h1>Reporte de Ventas</h1>
-        <div class="meta">
-          <strong>Rango:</strong> ${startDate || '—'} — ${endDate || '—'}<br/>
-          <strong>Generado por:</strong> ${req.user.name ?? req.user.email ?? req.user.id} (${req.user.role})<br/>
-          <strong>Fecha generación:</strong> ${new Date().toLocaleString()}
-        </div>
+        <div><strong>Rango:</strong> ${startDate} — ${endDate}<br/>
+        <strong>Generado por:</strong> ${req.user?.name ?? req.user?.email ?? req.user?.id} (${req.user?.role})<br/>
+        <strong>Fecha generación:</strong> ${new Date().toLocaleString()}</div>
 
         <table>
           <thead>
-            <tr>
-              <th style="width:4%">#</th>
-              <th style="width:18%">Fecha</th>
-              <th style="width:18%">Vendedor</th>
-              <th style="width:50%">Productos</th>
-              <th style="width:10%">Total</th>
-            </tr>
+            <tr><th>#</th><th>Fecha</th><th>Vendedor</th><th>Productos</th><th>Total</th></tr>
           </thead>
           <tbody>
             ${rowsHtml || `<tr><td colspan="5" style="padding:12px;text-align:center">No hay ventas en el rango seleccionado.</td></tr>`}
           </tbody>
         </table>
 
-        <div class="totals">
-          <div><strong>Cantidad ventas:</strong> ${cantidadVentas}</div>
-          <div><strong>Total ventas:</strong> ${totalVentas.toFixed(2)}</div>
+        <div style="margin-top:12px;">
+          <strong>Cantidad ventas:</strong> ${cantidadVentas}<br/>
+          <strong>Total ventas:</strong> ${totalVentas.toFixed(2)}
         </div>
       </body>
       </html>
     `;
 
-    // Generar PDF con puppeteer
-    const browser = await puppeteer.launch({
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-    const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '20mm', right: '10mm', bottom: '20mm', left: '10mm' } });
-    await browser.close();
+    // Generación del PDF con puppeteer - pasos separados y try/catch para localizar errores
+    let browser;
+    try {
+      console.log('[PDF] Lanzando Puppeteer...');
+      browser = await puppeteer.launch({
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        timeout: 30000 // 30s para lanzar
+      });
+      console.log('[PDF] Puppeteer lanzado. executablePath:', browser?.process ? browser.process().spawnfile : 'n/a');
+    } catch (pptrLaunchErr) {
+      console.error('[PDF] Error lanzando Puppeteer:', pptrLaunchErr);
+      if (includeStack) {
+        return res.status(500).json({ error: 'Error lanzando Puppeteer', message: pptrLaunchErr.message, stack: pptrLaunchErr.stack });
+      }
+      return res.status(500).json({ error: 'Error lanzando Puppeteer (revisar logs del servidor).' });
+    }
 
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="reporte_ventas_${Date.now()}.pdf"`,
-      'Content-Length': pdfBuffer.length
-    });
+    try {
+      const page = await browser.newPage();
+      // Timeout razonable para setContent/pdf
+      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+      console.log('[PDF] HTML cargado en página Puppeteer.');
 
-    return res.send(pdfBuffer);
+      const pdfBuffer = await page.pdf({
+        format: 'A4',
+        printBackground: true,
+        margin: { top: '20mm', right: '10mm', bottom: '20mm', left: '10mm' },
+        timeout: 120000
+      });
+      console.log('[PDF] PDF generado, tamaño(bytes):', pdfBuffer.length);
+
+      await browser.close();
+
+      res.set({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="reporte_ventas_${Date.now()}.pdf"`,
+        'Content-Length': pdfBuffer.length
+      });
+      return res.send(pdfBuffer);
+    } catch (pptrPageErr) {
+      console.error('[PDF] Error generando PDF en página de Puppeteer:', pptrPageErr);
+      try { if (browser) await browser.close(); } catch (closeErr) { console.error('[PDF] Error cerrando browser:', closeErr); }
+      if (includeStack) {
+        return res.status(500).json({ error: 'Error durante generación de PDF', message: pptrPageErr.message, stack: pptrPageErr.stack });
+      }
+      return res.status(500).json({ error: 'Error durante generación de PDF (revisar logs del servidor).' });
+    }
   } catch (error) {
-    console.error('Error generando PDF:', error);
-    res.status(500).json({ error: 'Error generando PDF' });
+    console.error('[PDF] Error inesperado:', error);
+    if (includeStack) {
+      return res.status(500).json({ error: 'Error generando PDF', message: error.message, stack: error.stack });
+    }
+    return res.status(500).json({ error: 'Error generando PDF (revisar logs del servidor).' });
   }
 };
