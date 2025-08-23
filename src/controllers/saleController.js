@@ -1,7 +1,12 @@
 // backend-node/src/controllers/saleController.js
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import Sale from '../models/Sale.js';
 import User from '../models/User.js';
 import puppeteer from 'puppeteer';
+import PDFDocument from 'pdfkit';
+import streamBuffers from 'stream-buffers';
 
 // Crear nueva venta
 export const createSale = async (req, res) => {
@@ -106,8 +111,6 @@ export const getSalesReport = async (req, res) => {
   }
 };
 
-// Agregar estas funciones al final del archivo saleController.js
-
 // Actualizar una venta existente
 export const updateSale = async (req, res) => {
   const { id } = req.params;
@@ -158,8 +161,94 @@ export const deleteSale = async (req, res) => {
   }
 };
 
+/* -------------------- Helpers para PDF -------------------- */
+
+const commonChromeCandidates = () => {
+  const homedir = os.homedir();
+  const candidates = [
+    // Env vars
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_PATH,
+    process.env.CHROME_BIN,
+    process.env.PUPPETEER_EXECUTABLE_PATH, // redundante por si acaso
+    // Puppeteer cache typical path (Windows example you used)
+    path.join(homedir, '.cache', 'puppeteer', 'chrome', 'win64-139.0.7258.138', 'chrome-win64', 'chrome.exe'),
+    // Common windows fallback (program files)
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    // Linux common
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/snap/bin/chromium',
+    // Mac common
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+  ];
+  return candidates.filter(Boolean);
+};
+
+const findChromeExecutable = () => {
+  const candidates = commonChromeCandidates();
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) return c;
+    } catch (e) {
+      // ignore
+    }
+  }
+  return null;
+};
+
+const generatePdfWithPdfKit = async (ventas, meta, res) => {
+  try {
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+    const writableStreamBuffer = new streamBuffers.WritableStreamBuffer({
+      initialSize: (100 * 1024),
+      incrementAmount: (10 * 1024)
+    });
+    doc.pipe(writableStreamBuffer);
+
+    doc.fontSize(16).text('Reporte de Ventas', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(10).text(`Rango: ${meta.startDate} — ${meta.endDate}`);
+    doc.text(`Generado por: ${meta.user}`);
+    doc.text(`Fecha generación: ${new Date().toLocaleString()}`);
+    doc.moveDown();
+
+    ventas.forEach((v, i) => {
+      doc.fontSize(10).text(`${i + 1}. Fecha: ${new Date(v.fecha).toLocaleString()} — Vendedor: ${v.vendedor_id?.name ?? v.vendedor_id?.email ?? '—'}`);
+      const productosStr = Array.isArray(v.productos) ? v.productos.map(p => `${p.nombre || p.name}(x${p.cantidad ?? p.qty ?? 1})`).join(', ') : JSON.stringify(v.productos);
+      doc.fontSize(9).text(`Productos: ${productosStr}`);
+      doc.text(`Total: ${(v.total ?? 0).toFixed(2)}`);
+      doc.moveDown(0.5);
+    });
+
+    doc.moveDown();
+    doc.fontSize(11).text(`Cantidad ventas: ${ventas.length}`);
+    doc.text(`Total ventas: ${ventas.reduce((s, v) => s + (v.total ?? 0), 0).toFixed(2)}`);
+
+    doc.end();
+
+    await new Promise((resolve) => {
+      writableStreamBuffer.on('finish', resolve);
+    });
+
+    const pdfBuffer = writableStreamBuffer.getContents();
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="reporte_ventas_${Date.now()}.pdf"`,
+      'Content-Length': pdfBuffer.length
+    });
+    return res.send(pdfBuffer);
+  } catch (err) {
+    console.error('[PDF-FALLBACK] Error generando PDF con PDFKit:', err);
+    return res.status(500).json({ error: 'Error generando PDF con fallback PDFKit', message: err.message });
+  }
+};
+
 /**
- * getSalesReportPDF mejorado: validación, logs detallados y opciones de debug.
+ * getSalesReportPDF mejorado: detecta Chrome, logs detallados y fallback a PDFKit.
  * Para activar stack trace en la respuesta añade ?debug=true (útil en desarrollo).
  */
 export const getSalesReportPDF = async (req, res) => {
@@ -198,7 +287,6 @@ export const getSalesReportPDF = async (req, res) => {
       ventas = await Sale.find(query).populate('vendedor_id', 'name email').sort({ fecha: -1 });
       console.log(`[PDF] Ventas recuperadas: ${ventas.length}`);
       if (ventas.length > 0) {
-        // loguear muestra del primer elemento (para depuración)
         const sample = ventas[0].toObject ? ventas[0].toObject() : ventas[0];
         const sampleCompact = {
           id: sample._id,
@@ -272,26 +360,33 @@ export const getSalesReportPDF = async (req, res) => {
       </html>
     `;
 
-    // Generación del PDF con puppeteer - pasos separados y try/catch para localizar errores
+    // Intentar generar con Puppeteer primero
     let browser;
     try {
-      console.log('[PDF] Lanzando Puppeteer...');
-      browser = await puppeteer.launch({
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        timeout: 30000 // 30s para lanzar
-      });
-      console.log('[PDF] Puppeteer lanzado. executablePath:', browser?.process ? browser.process().spawnfile : 'n/a');
+      console.log('[PDF] Intentando detectar Chrome/Chromium...');
+      const chromePath = findChromeExecutable();
+      if (chromePath) console.log('[PDF] Ejecutable Chrome detectado en:', chromePath);
+      else console.warn('[PDF] No se detectó Chrome automáticamente mediante rutas comunes. Intentando lanzamiento sin executablePath.');
+
+      const launchOptions = {
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        headless: 'new',
+        timeout: 30000
+      };
+      if (chromePath) launchOptions.executablePath = chromePath;
+
+      console.log('[PDF] Opciones de lanzamiento Puppeteer:', { ...launchOptions, executablePath: launchOptions.executablePath ? 'present' : 'not-set' });
+      browser = await puppeteer.launch(launchOptions);
+      console.log('[PDF] Puppeteer lanzado correctamente.');
     } catch (pptrLaunchErr) {
       console.error('[PDF] Error lanzando Puppeteer:', pptrLaunchErr);
-      if (includeStack) {
-        return res.status(500).json({ error: 'Error lanzando Puppeteer', message: pptrLaunchErr.message, stack: pptrLaunchErr.stack });
-      }
-      return res.status(500).json({ error: 'Error lanzando Puppeteer (revisar logs del servidor).' });
+      // En caso de fallo al lanzar Puppeteer usamos fallback con PDFKit
+      console.warn('[PDF] Usando fallback PDFKit para generar el PDF.');
+      return await generatePdfWithPdfKit(ventas, { startDate, endDate, user: `${req.user?.name ?? req.user?.email ?? req.user?.id}` }, res);
     }
 
     try {
       const page = await browser.newPage();
-      // Timeout razonable para setContent/pdf
       await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
       console.log('[PDF] HTML cargado en página Puppeteer.');
 
@@ -314,10 +409,8 @@ export const getSalesReportPDF = async (req, res) => {
     } catch (pptrPageErr) {
       console.error('[PDF] Error generando PDF en página de Puppeteer:', pptrPageErr);
       try { if (browser) await browser.close(); } catch (closeErr) { console.error('[PDF] Error cerrando browser:', closeErr); }
-      if (includeStack) {
-        return res.status(500).json({ error: 'Error durante generación de PDF', message: pptrPageErr.message, stack: pptrPageErr.stack });
-      }
-      return res.status(500).json({ error: 'Error durante generación de PDF (revisar logs del servidor).' });
+      console.warn('[PDF] Usando fallback PDFKit tras error en page/pdf.');
+      return await generatePdfWithPdfKit(ventas, { startDate, endDate, user: `${req.user?.name ?? req.user?.email ?? req.user?.id}` }, res);
     }
   } catch (error) {
     console.error('[PDF] Error inesperado:', error);
