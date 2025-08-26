@@ -547,5 +547,5 @@ export const getSalesReportPDF = async (req, res) => {
       return res.status(500).json({ error: 'Error generando PDF', message: error.message, stack: error.stack });
     }
     return res.status(500).json({ error: 'Error generando PDF (revisar logs del servidor).' });
-  }
+  // }
 };
