@@ -2,84 +2,123 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import axios from 'axios';
 import Sale from '../models/Sale.js';
 import User from '../models/User.js';
 import puppeteer from 'puppeteer';
 import PDFDocument from 'pdfkit';
 import streamBuffers from 'stream-buffers';
-import axios from 'axios';
 
 const PYTHON_API = process.env.PYTHON_API_URL || 'https://backend-python-io29.onrender.com';
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || null; // opcional: usa header para llamadas entre servicios
+const AXIOS_TIMEOUT = 5000;
+
+/* -------------------- Helpers para comunicacion con backend Python -------------------- */
+
+const pythonHeaders = () => {
+  const h = { 'Content-Type': 'application/json' };
+  if (INTERNAL_API_KEY) h['x-internal-key'] = INTERNAL_API_KEY;
+  return h;
+};
+
+const decrementStock = async (productId, cantidad) => {
+  const url = `${PYTHON_API}/api/products/${productId}/decrement`;
+  const res = await axios.post(url, { cantidad }, { headers: pythonHeaders(), timeout: AXIOS_TIMEOUT });
+  return res.data;
+};
+
+const adjustStock = async (productId, delta) => {
+  const url = `${PYTHON_API}/api/products/${productId}/adjust`;
+  const res = await axios.post(url, { cantidad: delta }, { headers: pythonHeaders(), timeout: AXIOS_TIMEOUT });
+  return res.data;
+};
+
+/* -------------------- Utiles para normalizar items -------------------- */
+
+const normalizeItems = (productos) => {
+  // Acepta varias formas: { product_id, id, _id, productId } y cantidad o qty o cantidad
+  if (!Array.isArray(productos)) return [];
+  return productos.map(p => {
+    const productId = p.product_id || p.productId || p.id || p._id || (p.product && (p.product.id || p.product._id));
+    const cantidad = p.cantidad ?? p.qty ?? p.quantity ?? p.cant ?? 1;
+    return { productId: String(productId), cantidad: Number(cantidad), raw: p };
+  });
+};
+
+/* -------------------- Crear nueva venta (ahora con ajuste de stock) -------------------- */
 
 export const createSale = async (req, res) => {
   const { productos } = req.body;
   const vendedor_id = req.user.id; // Obtenido del token
 
-  if (!Array.isArray(productos) || productos.length === 0) {
-    return res.status(400).json({ error: 'La venta debe incluir productos' });
-  }
-
-  // Normalizar items: esperar { product_id, cantidad, ... }
-  const items = productos.map(p => ({
-    productId: p.product_id || p.id || p._id || p.productId,
-    cantidad: p.cantidad ?? p.qty ?? p.quantity ?? 1,
-    raw: p
-  }));
-
-  // Validaciones básicas
-  for (const it of items) {
-    if (!it.productId) return res.status(400).json({ error: 'Cada producto debe tener un product_id' });
-    if (it.cantidad <= 0) return res.status(400).json({ error: 'cantidad inválida para un producto' });
-  }
-
-  const adjusted = []; // para rollback [{productId, cantidad}]
   try {
-    // 1) Intentar decrementar stock en Python para cada item
-    for (const it of items) {
-      const url = `${PYTHON_API}/api/products/${it.productId}/decrement`;
-      // Llamada a Python
-      await axios.post(url, { cantidad: it.cantidad }, { timeout: 5000 });
-      adjusted.push({ productId: it.productId, cantidad: it.cantidad });
+    // Verificar que el vendedor exista
+    const vendedor = await User.findById(vendedor_id);
+    if (!vendedor) {
+      return res.status(404).json({ error: 'Vendedor no encontrado' });
     }
 
-    // 2) Si llegamos aquí, todos los decrementos fueron ok -> crear venta
-    const nuevaVenta = new Sale({
-      vendedor_id,
-      productos // guarda la data que enviaste (puedes normalizar si quieres)
-    });
+    // Normalizar items
+    const items = normalizeItems(productos);
+    if (items.length === 0) {
+      return res.status(400).json({ error: 'La venta debe incluir al menos un producto' });
+    }
 
-    await nuevaVenta.save();
-    return res.status(201).json(nuevaVenta);
-  } catch (err) {
-    console.error('[CREATE_SALE] Error al decrementar stock o crear venta:', err?.response?.data ?? err.message);
-
-    // Rollback: intentar devolver stock de los que sí se decrementaron
-    for (const adj of adjusted) {
-      try {
-        const rollUrl = `${PYTHON_API}/api/products/${adj.productId}/adjust`;
-        // Ajuste positivo para devolver unidades
-        await axios.post(rollUrl, { cantidad: adj.cantidad }, { timeout: 5000 });
-      } catch (rbErr) {
-        console.error(`[ROLLBACK] Falló rollback para ${adj.productId}:`, rbErr?.response?.data ?? rbErr.message);
-        // sigue intentando con los demás
+    // Validaciones simples
+    for (const it of items) {
+      if (!it.productId || isNaN(it.cantidad) || it.cantidad <= 0) {
+        return res.status(400).json({ error: 'Cada producto debe tener product_id válido y cantidad > 0' });
       }
     }
 
-    // Si la falla fue por stock insuficiente, responde 400 con mensaje útil
-    const status = err?.response?.status === 400 ? 400 : 500;
-    const message = err?.response?.data?.detail || err?.message || 'Error registrando venta';
-    return res.status(status).json({ error: message });
+    // Intentar decrementar stock en Python por cada item
+    const adjusted = []; // para rollback [{productId, cantidad}]
+    try {
+      for (const it of items) {
+        await decrementStock(it.productId, it.cantidad);
+        adjusted.push({ productId: it.productId, cantidad: it.cantidad });
+      }
+    } catch (err) {
+      // Si falla algún decremento hacemos rollback de los que sí se ajustaron
+      console.error('[CREATE_SALE] Error decrementando stock:', err?.response?.data ?? err.message);
+      for (const adj of adjusted) {
+        try {
+          await adjustStock(adj.productId, adj.cantidad); // devolver unidades
+        } catch (rbErr) {
+          console.error(`[CREATE_SALE][ROLLBACK] Falló rollback para ${adj.productId}:`, rbErr?.response?.data ?? rbErr.message);
+        }
+      }
+      const status = err?.response?.status === 400 ? 400 : 500;
+      const message = err?.response?.data?.detail || err?.response?.data || err.message || 'Error al decrementar stock';
+      return res.status(status).json({ error: message });
+    }
+
+    // Si llegamos aquí, todos los decrementos fueron exitosos -> crear venta
+    const nuevaVenta = new Sale({
+      vendedor_id,
+      productos // guardamos como llegó (puedes normalizar si quieres)
+    });
+
+    // El total se calcula automáticamente en el pre-save
+    await nuevaVenta.save();
+
+    return res.status(201).json(nuevaVenta);
+  } catch (error) {
+    console.error('[CREATE_SALE] Error creando venta:', error);
+    // En caso de error grave intenta rollback si hubiera hecho ajustes (defensivo)
+    // Nota: en este catch no tenemos la lista `adjusted` fuera, por eso la gestión de rollback se hace arriba.
+    return res.status(500).json({ error: 'Error creando venta' });
   }
 };
 
-// Obtener todas las ventas (solo administrador o vendedor de la venta)
+/* -------------------- Obtener ventas / venta por id / reporte (sin cambios lógicos) -------------------- */
+
 export const getSales = async (req, res) => {
   try {
     let ventas;
     if (req.user.role === 'Administrador') {
       ventas = await Sale.find().populate('vendedor_id', 'name email');
     } else {
-      // Solo las ventas del vendedor
       ventas = await Sale.find({ vendedor_id: req.user.id }).populate('vendedor_id', 'name email');
     }
     res.json(ventas);
@@ -89,7 +128,6 @@ export const getSales = async (req, res) => {
   }
 };
 
-// Obtener una venta por ID
 export const getSaleById = async (req, res) => {
   const { id } = req.params;
 
@@ -98,12 +136,9 @@ export const getSaleById = async (req, res) => {
     if (!venta) {
       return res.status(404).json({ error: 'Venta no encontrada' });
     }
-
-    // Verificar permisos: administrador o vendedor que creó la venta
     if (req.user.role !== 'Administrador' && venta.vendedor_id._id.toString() !== req.user.id) {
       return res.status(403).json({ error: 'No autorizado para ver esta venta' });
     }
-
     res.json(venta);
   } catch (error) {
     console.error(error);
@@ -111,7 +146,6 @@ export const getSaleById = async (req, res) => {
   }
 };
 
-// Obtener reporte de ventas por rango de fechas
 export const getSalesReport = async (req, res) => {
   const { startDate, endDate } = req.query;
 
@@ -122,8 +156,6 @@ export const getSalesReport = async (req, res) => {
         $lte: new Date(endDate)
       }
     };
-
-    // Solo administrador puede ver todas las ventas
     if (req.user.role !== 'Administrador') {
       query.vendedor_id = req.user.id;
     }
@@ -132,67 +164,136 @@ export const getSalesReport = async (req, res) => {
       .populate('vendedor_id', 'name email')
       .sort({ fecha: -1 });
 
-    // Calcular totales
     const totalVentas = ventas.reduce((sum, venta) => sum + venta.total, 0);
     const cantidadVentas = ventas.length;
 
-    res.json({
-      ventas,
-      totalVentas,
-      cantidadVentas
-    });
+    res.json({ ventas, totalVentas, cantidadVentas });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Error generando reporte' });
   }
 };
 
-// Actualizar una venta existente
+/* -------------------- Actualizar venta (ajusta stock con diffs) -------------------- */
+
 export const updateSale = async (req, res) => {
   const { id } = req.params;
   const { productos } = req.body;
 
   try {
     const venta = await Sale.findById(id);
-    if (!venta) {
-      return res.status(404).json({ error: 'Venta no encontrada' });
-    }
+    if (!venta) return res.status(404).json({ error: 'Venta no encontrada' });
 
-    // Verificar permisos: solo administrador o el vendedor que creó la venta
     if (req.user.role !== 'Administrador' && venta.vendedor_id.toString() !== req.user.id) {
       return res.status(403).json({ error: 'No autorizado para modificar esta venta' });
     }
 
-    // Actualizar productos
+    // Normalizar arrays
+    const oldItems = normalizeItems(venta.productos);
+    const newItems = normalizeItems(productos);
+
+    // Crear mapas productId -> cantidad
+    const mapOld = {};
+    for (const it of oldItems) mapOld[it.productId] = (mapOld[it.productId] || 0) + it.cantidad;
+    const mapNew = {};
+    for (const it of newItems) mapNew[it.productId] = (mapNew[it.productId] || 0) + it.cantidad;
+
+    // Calcular diffs: diff = new - old
+    const diffs = [];
+    const allProductIds = Array.from(new Set([...Object.keys(mapOld), ...Object.keys(mapNew)]));
+    for (const pid of allProductIds) {
+      const oldQ = mapOld[pid] || 0;
+      const newQ = mapNew[pid] || 0;
+      const diff = newQ - oldQ;
+      if (diff !== 0) diffs.push({ productId: pid, diff }); // diff >0 => necesitamos decrementar más; diff <0 => devolver stock
+    }
+
+    // Aplicar diffs en Python: tratar decrementos y ajustes positivos (incrementos)
+    const applied = []; // para rollback [{productId, appliedDelta}] appliedDelta is the actual delta applied to DB (positive means stock reduced, negative means stock increased)
+    try {
+      for (const d of diffs) {
+        if (d.diff > 0) {
+          // Hay que restar más stock (decrement)
+          await decrementStock(d.productId, d.diff);
+          applied.push({ productId: d.productId, appliedDelta: d.diff }); // reducimos stock
+        } else {
+          // diff < 0 -> significa que ahora vendemos menos, devolver stock
+          const returnQty = Math.abs(d.diff);
+          await adjustStock(d.productId, returnQty); // incrementamos stock en python
+          applied.push({ productId: d.productId, appliedDelta: -returnQty }); // negative -> stock increased
+        }
+      }
+    } catch (err) {
+      console.error('[UPDATE_SALE] Error aplicando diffs:', err?.response?.data ?? err.message);
+      // Rollback: revertir applied en orden inverso
+      for (const a of applied.reverse()) {
+        try {
+          if (a.appliedDelta > 0) {
+            // si aplicamos decrement (reducimos stock), devolvemos esas unidades
+            await adjustStock(a.productId, a.appliedDelta);
+          } else if (a.appliedDelta < 0) {
+            // si aplicamos incremento (devuelta), ahora restamos esa cantidad otra vez
+            await decrementStock(a.productId, Math.abs(a.appliedDelta));
+          }
+        } catch (rbErr) {
+          console.error(`[UPDATE_SALE][ROLLBACK] Falló rollback para ${a.productId}:`, rbErr?.response?.data ?? rbErr.message);
+        }
+      }
+      const status = err?.response?.status === 400 ? 400 : 500;
+      const message = err?.response?.data?.detail || err?.response?.data || err.message || 'Error ajustando stock al actualizar venta';
+      return res.status(status).json({ error: message });
+    }
+
+    // Si todo ok, actualizamos la venta y guardamos
     venta.productos = productos;
     await venta.save();
-
-    res.json(venta);
+    return res.json(venta);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Error actualizando venta' });
+    console.error('[UPDATE_SALE] Error actualizando venta:', error);
+    return res.status(500).json({ error: 'Error actualizando venta' });
   }
 };
 
-// Eliminar una venta
+/* -------------------- Eliminar venta (restituye stock) -------------------- */
+
 export const deleteSale = async (req, res) => {
   const { id } = req.params;
 
   try {
     const venta = await Sale.findById(id);
-    if (!venta) {
-      return res.status(404).json({ error: 'Venta no encontrada' });
-    }
+    if (!venta) return res.status(404).json({ error: 'Venta no encontrada' });
 
-    // Verificar permisos: solo administrador o el vendedor que creó la venta
     if (req.user.role !== 'Administrador' && venta.vendedor_id.toString() !== req.user.id) {
       return res.status(403).json({ error: 'No autorizado para eliminar esta venta' });
+    }
+
+    // Antes de eliminar, devolver stock de todos los productos vendidos
+    const items = normalizeItems(venta.productos);
+    const returned = []; // track para rollback teórico
+    try {
+      for (const it of items) {
+        await adjustStock(it.productId, it.cantidad); // devuelve unidades
+        returned.push({ productId: it.productId, cantidad: it.cantidad });
+      }
+    } catch (err) {
+      console.error('[DELETE_SALE] Error devolviendo stock antes de eliminar venta:', err?.response?.data ?? err.message);
+      // Intentar rollback de lo que ya se devolvió (tratar de restarlo otra vez)
+      for (const r of returned) {
+        try {
+          await decrementStock(r.productId, r.cantidad);
+        } catch (rbErr) {
+          console.error(`[DELETE_SALE][ROLLBACK] Falló rollback para ${r.productId}:`, rbErr?.response?.data ?? rbErr.message);
+        }
+      }
+      const status = err?.response?.status === 400 ? 400 : 500;
+      const message = err?.response?.data?.detail || err?.response?.data || err.message || 'Error devolviendo stock al eliminar venta';
+      return res.status(status).json({ error: message });
     }
 
     await venta.deleteOne();
     res.json({ message: 'Venta eliminada correctamente' });
   } catch (error) {
-    console.error(error);
+    console.error('[DELETE_SALE] Error eliminando venta:', error);
     res.status(500).json({ error: 'Error eliminando venta' });
   }
 };
@@ -283,17 +384,14 @@ const generatePdfWithPdfKit = async (ventas, meta, res) => {
   }
 };
 
-/**
- * getSalesReportPDF mejorado: detecta Chrome, logs detallados y fallback a PDFKit.
- * Para activar stack trace en la respuesta añade ?debug=true (útil en desarrollo).
- */
+/* -------------------- getSalesReportPDF (sin cambios) -------------------- */
+
 export const getSalesReportPDF = async (req, res) => {
   const { startDate, endDate } = req.query;
   const includeStack = req.query.debug === 'true' || process.env.NODE_ENV !== 'production';
 
   console.log('[PDF] Inicio de getSalesReportPDF', { startDate, endDate, user: req.user?.id, role: req.user?.role });
 
-  // Validación básica de fechas
   if (!startDate || !endDate) {
     console.error('[PDF] Falta startDate o endDate en query.');
     return res.status(400).json({ error: 'startDate y endDate son requeridos. Formato ISO: YYYY-MM-DD', hint: 'Ejemplo: ?startDate=2025-01-01&endDate=2025-08-22' });
@@ -307,7 +405,6 @@ export const getSalesReportPDF = async (req, res) => {
   }
 
   try {
-    // Construir query (igual que en getSalesReport)
     const query = {
       fecha: { $gte: start, $lte: end }
     };
@@ -317,7 +414,6 @@ export const getSalesReportPDF = async (req, res) => {
 
     console.log('[PDF] Query construida', query);
 
-    // Obtener ventas
     let ventas;
     try {
       ventas = await Sale.find(query).populate('vendedor_id', 'name email').sort({ fecha: -1 });
@@ -341,7 +437,6 @@ export const getSalesReportPDF = async (req, res) => {
       return res.status(500).json({ error: 'Error consultando ventas (revisar logs del servidor)' });
     }
 
-    // Construir HTML (puedes personalizarlo)
     const rowsHtml = ventas.map((v, idx) => {
       const fecha = new Date(v.fecha).toLocaleString();
       const vendedor = v.vendedor_id ? (v.vendedor_id.name || v.vendedor_id.email) : '—';
@@ -396,7 +491,6 @@ export const getSalesReportPDF = async (req, res) => {
       </html>
     `;
 
-    // Intentar generar con Puppeteer primero
     let browser;
     try {
       console.log('[PDF] Intentando detectar Chrome/Chromium...');
@@ -416,7 +510,6 @@ export const getSalesReportPDF = async (req, res) => {
       console.log('[PDF] Puppeteer lanzado correctamente.');
     } catch (pptrLaunchErr) {
       console.error('[PDF] Error lanzando Puppeteer:', pptrLaunchErr);
-      // En caso de fallo al lanzar Puppeteer usamos fallback con PDFKit
       console.warn('[PDF] Usando fallback PDFKit para generar el PDF.');
       return await generatePdfWithPdfKit(ventas, { startDate, endDate, user: `${req.user?.name ?? req.user?.email ?? req.user?.id}` }, res);
     }
