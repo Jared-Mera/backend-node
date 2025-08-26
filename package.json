@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "seed": "node --experimental-json-modules src/scripts/seed.js"
+    "seed": "node --experimental-json-modules src/scripts/seed.js",
+    "start": "node src/index.js"
   },
   "keywords": [],
   "author": "",
