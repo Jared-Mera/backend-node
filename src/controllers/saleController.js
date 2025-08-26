@@ -7,32 +7,68 @@ import User from '../models/User.js';
 import puppeteer from 'puppeteer';
 import PDFDocument from 'pdfkit';
 import streamBuffers from 'stream-buffers';
+import axios from 'axios';
 
-// Crear nueva venta
+const PYTHON_API = process.env.PYTHON_API_URL || 'https://backend-python-io29.onrender.com';
+
 export const createSale = async (req, res) => {
   const { productos } = req.body;
   const vendedor_id = req.user.id; // Obtenido del token
 
+  if (!Array.isArray(productos) || productos.length === 0) {
+    return res.status(400).json({ error: 'La venta debe incluir productos' });
+  }
+
+  // Normalizar items: esperar { product_id, cantidad, ... }
+  const items = productos.map(p => ({
+    productId: p.product_id || p.id || p._id || p.productId,
+    cantidad: p.cantidad ?? p.qty ?? p.quantity ?? 1,
+    raw: p
+  }));
+
+  // Validaciones básicas
+  for (const it of items) {
+    if (!it.productId) return res.status(400).json({ error: 'Cada producto debe tener un product_id' });
+    if (it.cantidad <= 0) return res.status(400).json({ error: 'cantidad inválida para un producto' });
+  }
+
+  const adjusted = []; // para rollback [{productId, cantidad}]
   try {
-    // Verificar que el vendedor exista
-    const vendedor = await User.findById(vendedor_id);
-    if (!vendedor) {
-      return res.status(404).json({ error: 'Vendedor no encontrado' });
+    // 1) Intentar decrementar stock en Python para cada item
+    for (const it of items) {
+      const url = `${PYTHON_API}/api/products/${it.productId}/decrement`;
+      // Llamada a Python
+      await axios.post(url, { cantidad: it.cantidad }, { timeout: 5000 });
+      adjusted.push({ productId: it.productId, cantidad: it.cantidad });
     }
 
-    // Crear la venta
+    // 2) Si llegamos aquí, todos los decrementos fueron ok -> crear venta
     const nuevaVenta = new Sale({
       vendedor_id,
-      productos
+      productos // guarda la data que enviaste (puedes normalizar si quieres)
     });
 
-    // El total se calcula automáticamente en el pre-save
     await nuevaVenta.save();
+    return res.status(201).json(nuevaVenta);
+  } catch (err) {
+    console.error('[CREATE_SALE] Error al decrementar stock o crear venta:', err?.response?.data ?? err.message);
 
-    res.status(201).json(nuevaVenta);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Error creando venta' });
+    // Rollback: intentar devolver stock de los que sí se decrementaron
+    for (const adj of adjusted) {
+      try {
+        const rollUrl = `${PYTHON_API}/api/products/${adj.productId}/adjust`;
+        // Ajuste positivo para devolver unidades
+        await axios.post(rollUrl, { cantidad: adj.cantidad }, { timeout: 5000 });
+      } catch (rbErr) {
+        console.error(`[ROLLBACK] Falló rollback para ${adj.productId}:`, rbErr?.response?.data ?? rbErr.message);
+        // sigue intentando con los demás
+      }
+    }
+
+    // Si la falla fue por stock insuficiente, responde 400 con mensaje útil
+    const status = err?.response?.status === 400 ? 400 : 500;
+    const message = err?.response?.data?.detail || err?.message || 'Error registrando venta';
+    return res.status(status).json({ error: message });
   }
 };
 
