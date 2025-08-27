@@ -22,9 +22,20 @@ const pythonHeaders = () => {
 };
 
 const decrementStock = async (productId, cantidad) => {
+  console.log(`[DEBUG] Decrementando producto: ${productId}, cantidad: ${cantidad}`);
   const url = `${PYTHON_API}/api/products/${productId}/decrement`;
-  const res = await axios.post(url, { cantidad }, { headers: pythonHeaders(), timeout: AXIOS_TIMEOUT });
-  return res.data;
+  try {
+    const res = await axios.post(url, { cantidad }, { 
+      headers: pythonHeaders(), 
+      timeout: AXIOS_TIMEOUT 
+    });
+    console.log(`[DEBUG] Respuesta Python: ${JSON.stringify(res.data)}`);
+    return res.data;
+  } catch (error) {
+    console.error(`[DEBUG] Error en decrementStock: ${error.message}`);
+    console.error(`[DEBUG] Response: ${error.response?.data}`);
+    throw error;
+  }
 };
 
 const adjustStock = async (productId, delta) => {
