@@ -25,9 +25,9 @@ const decrementStock = async (productId, cantidad) => {
   console.log(`[DEBUG] Decrementando producto: ${productId}, cantidad: ${cantidad}`);
   const url = `${PYTHON_API}/api/products/${productId}/decrement`;
   try {
-    const res = await axios.post(url, { cantidad }, { 
-      headers: pythonHeaders(), 
-      timeout: AXIOS_TIMEOUT 
+    const res = await axios.post(url, { cantidad }, {
+      headers: pythonHeaders(),
+      timeout: AXIOS_TIMEOUT
     });
     console.log(`[DEBUG] Respuesta Python: ${JSON.stringify(res.data)}`);
     return res.data;
@@ -104,10 +104,14 @@ export const createSale = async (req, res) => {
       return res.status(status).json({ error: message });
     }
 
-    // Si llegamos aquí, todos los decrementos fueron exitosos -> crear venta
+    // Después de los decrementos exitosos, antes de crear la venta:
     const nuevaVenta = new Sale({
       vendedor_id,
-      productos // guardamos como llegó (puedes normalizar si quieres)
+      productos: items.map(item => ({
+        productId: item.productId,
+        cantidad: item.cantidad,
+        // nombre y precio_unitario se llenarán automáticamente en el pre-save
+      }))
     });
 
     // El total se calcula automáticamente en el pre-save
@@ -436,7 +440,7 @@ export const getSalesReportPDF = async (req, res) => {
           fecha: sample.fecha,
           total: sample.total,
           vendedor: sample.vendedor_id,
-          productos_sample: Array.isArray(sample.productos) ? sample.productos.slice(0,2) : sample.productos
+          productos_sample: Array.isArray(sample.productos) ? sample.productos.slice(0, 2) : sample.productos
         };
         console.log('[PDF] Ejemplo de venta:', sampleCompact);
       }
